@@ -27,6 +27,9 @@ def normalizar(texto):
     return " ".join(t.split())
 
 def iniciar_novo_projeto():
+    # ---------------------------------------------------------
+    # 1. PROCESSAMENTO DA DIMENSÃO CLIENTES (TABELA MESTRE)
+    # ---------------------------------------------------------
     df_m = pd.read_csv(os.path.join(PATH_BRUTOS, 'Base_Clientes.csv'), sep=None, engine='python', encoding='latin1', dtype=str)
     df_m.columns = [c.strip() for c in df_m.columns]
 
@@ -47,6 +50,9 @@ def iniciar_novo_projeto():
     clientes_adicionais = []
     chaves_mestre_existentes = set(mapa_verdade.keys())
 
+    # ---------------------------------------------------------
+    # 2. PROCESSAMENTO DA FATO PATRIMÔNIOS
+    # ---------------------------------------------------------
     df_p = pd.read_excel(os.path.join(PATH_BRUTOS, 'Base_Patrimonios.xlsx'), dtype=str)
     df_p.columns = [c.strip() for c in df_p.columns]
     
@@ -82,6 +88,9 @@ def iniciar_novo_projeto():
     cols_p = ['CHAVE_BI', 'CPF/CNPJ', 'Razao_Social', 'Nome_Fantasia', 'Cidade', 'Representante', 'Nr_Patrimonio', 'Patrimonio', 'Marca', 'Status']
     pd.DataFrame(res_p, columns=cols_p).to_csv(os.path.join(PATH_SAIDA, 'Fato_Patrimonios.csv'), index=False, sep=';', encoding='utf-8-sig')
 
+    # ---------------------------------------------------------
+    # 3. PROCESSAMENTO DA FATO FATURAMENTO
+    # ---------------------------------------------------------
     arquivos_f = glob.glob(os.path.join(PATH_MENSAL, "*.csv"))
     res_f_total = []
     for f in arquivos_f:
@@ -122,8 +131,37 @@ def iniciar_novo_projeto():
             res_f_total.append([chave_bi, doc_final, razao_f, fantasia_f, cid_f, normalizar(r.get(col_rep, '')), val_mes, str(r.get(col_op, '')).replace('nan', ''), str(r.get(col_prod, '')).replace('nan', ''), str(r.get(col_marca, '')).replace('nan', ''), str(r.get(col_tot, '')).replace('nan', '')])
 
     cols_f = ['CHAVE_BI', 'CPF/CNPJ', 'Razao_Social', 'Nome_Fantasia', 'Cidade', 'Representante', 'Mes_Faturamento', 'Operacao', 'Produto', 'Marca', 'Total_Pedido']
-    pd.DataFrame(res_f_total, columns=cols_f).to_csv(os.path.join(PATH_SAIDA, 'Fato_Faturamento.csv'), index=False, sep=';', encoding='utf-8-sig')
+    df_fato_faturamento = pd.DataFrame(res_f_total, columns=cols_f)
+    
+    # ---------------------------------------------------------
+    # --- A MÁGICA DA DATA (À PROVA DE BALAS) ---
+    # ---------------------------------------------------------
+    def arrumar_data(valor):
+        v = str(valor).strip().upper()
+        # 1. Se o sistema acabou puxando 'JAN', 'FEV' do nome do arquivo:
+        meses = {'JAN': '01', 'FEV': '02', 'MAR': '03', 'ABR': '04', 'MAI': '05', 'JUN': '06', 
+                 'JUL': '07', 'AGO': '08', 'SET': '09', 'OUT': '10', 'NOV': '11', 'DEZ': '12'}
+        if v in meses:
+            return f"2026-{meses[v]}-01" # Força o ano e o dia 01
+            
+        # 2. Se for qualquer outra coisa (como 2026/01 ou 01/2026), deixa o Pandas se virar
+        return v
 
+    # Aplica a nossa regra salva-vidas
+    df_fato_faturamento['Mes_Faturamento'] = df_fato_faturamento['Mes_Faturamento'].apply(arrumar_data)
+    
+    # Pede pro Pandas descobrir o formato sozinho, sem forçar uma regra cega
+    df_fato_faturamento['Mes_Faturamento'] = pd.to_datetime(df_fato_faturamento['Mes_Faturamento'], errors='coerce').dt.strftime('%Y-%m-%d')
+    
+    # Se ainda assim algo vier muito bizarro do ERP, preenche com uma data padrão para a linha não sumir do BI
+    df_fato_faturamento['Mes_Faturamento'] = df_fato_faturamento['Mes_Faturamento'].fillna('2026-01-01')
+    # ---------------------------------------------------------
+    
+    df_fato_faturamento.to_csv(os.path.join(PATH_SAIDA, 'Fato_Faturamento.csv'), index=False, sep=';', encoding='utf-8-sig')
+
+    # ---------------------------------------------------------
+    # 4. FINALIZAÇÃO DA DIMENSÃO CLIENTES (RESGATE DE FANTASMAS)
+    # ---------------------------------------------------------
     if clientes_adicionais:
         df_novos = pd.DataFrame(clientes_adicionais)
         df_m = pd.concat([df_m, df_novos], ignore_index=True)
