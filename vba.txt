@@ -1,21 +1,24 @@
-Sub AtualizarInadimplenciaFinal()
+Sub AtualizarInadimplencia()
+    'carregar os dados na memória do Excel
     Dim wsOrigem As Worksheet, wsInad As Worksheet
     Dim ultLinhaOrigem As Long, ultLinhaMain As Long
     Dim qtdOrigem As Long, qtdInad As Long
     Dim diff As Long
     
+    'apelidos das abas
     Set wsOrigem = ThisWorkbook.Sheets("Origem dados")
-    Set wsInad = ThisWorkbook.Sheets("Inadimplência")
+    Set wsInad = ThisWorkbook.Sheets("Inadimplencia")
     
-    ' Desliga a tela para rodar rápido e sem piscar
+    
+    'pausa a atualização de tela do excel temporariamente
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     
-    ' 1. Conta quantos clientes vieram na nova Origem
+   'Contagem de linhas da Origem
     ultLinhaOrigem = wsOrigem.Cells(wsOrigem.Rows.Count, "A").End(xlUp).Row
     qtdOrigem = ultLinhaOrigem - 1
     
-    ' Se a Origem estiver vazia, avisa e aborta a macro imediatamente
+    'se a quantiadade de linhas da origem for menor que 1
     If qtdOrigem < 1 Then
         Application.Calculation = xlCalculationAutomatic
         Application.ScreenUpdating = True
@@ -23,65 +26,54 @@ Sub AtualizarInadimplenciaFinal()
         Exit Sub
     End If
     
-    ' 2. O SEGREDO: Usar a Coluna A para achar o fim da tabela principal
+    'Contagem de linhas da Inadimplencia
     ultLinhaMain = wsInad.Cells(wsInad.Rows.Count, "A").End(xlUp).Row
     If ultLinhaMain < 2 Then ultLinhaMain = 2
     qtdInad = ultLinhaMain - 1
     
-    ' ==============================================================
-    ' 3. EFEITO SANFONA: Ajustando o tamanho (protegendo a mini tabela)
-    ' ==============================================================
+    
+'''''''
     If qtdOrigem > qtdInad Then
-        ' CRESCER
         diff = qtdOrigem - qtdInad
         wsInad.Rows((ultLinhaMain + 1) & ":" & (ultLinhaMain + diff)).Insert Shift:=xlDown
-        
-        wsInad.Range("A" & ultLinhaMain & ":M" & ultLinhaMain).AutoFill _
-            Destination:=wsInad.Range("A" & ultLinhaMain & ":M" & (ultLinhaMain + diff)), Type:=xlFillDefault
-            
+        wsInad.Range("A" & ultLinhaMain & ":M" & ultLinhaMain).Copy
+        wsInad.Range("A" & (ultLinhaMain + 1) & ":M" & (ultLinhaMain + diff)).PasteSpecial Paste:=xlPasteFormulas
     ElseIf qtdOrigem < qtdInad And qtdOrigem > 0 Then
-        ' ENCOLHER
         wsInad.Rows((ultLinhaOrigem + 1) & ":" & ultLinhaMain).Delete Shift:=xlUp
     End If
-    
+'''''''
     ultLinhaMain = qtdOrigem + 1
-    
-    ' ==============================================================
-    ' 4. LIMPANDO E TROCANDO OS DADOS MANUAIS
-    ' ==============================================================
+
+    'limpeza de cache
     wsInad.Range("A2:A" & ultLinhaMain).ClearContents
     wsInad.Range("D2:D" & ultLinhaMain).ClearContents
     wsInad.Range("G2:G" & ultLinhaMain).ClearContents
     
-    ' Copia A (Nome), D (Vencimento) e G (Valor Doc)
+    'Cola os dados da Origem como Valores para não levar a formatação da base de Origem junto
     wsOrigem.Range("A2:A" & ultLinhaOrigem).Copy
     wsInad.Range("A2").PasteSpecial Paste:=xlPasteValues
-    
     wsOrigem.Range("B2:B" & ultLinhaOrigem).Copy
     wsInad.Range("D2").PasteSpecial Paste:=xlPasteValues
-    
     wsOrigem.Range("C2:C" & ultLinhaOrigem).Copy
     wsInad.Range("G2").PasteSpecial Paste:=xlPasteValues
     
-    ' ==============================================================
-    ' 5. ORDENAÇÃO DE A a Z (1º Vendedor, 2º Cidade)
-    ' ==============================================================
-    ' Ligar o cálculo para os PROCVs atualizarem antes de ordenar
+    'ligando a atualização automátia para os PROCVs atualizarem
     Application.Calculation = xlCalculationAutomatic
     
-    wsInad.Sort.SortFields.Clear
     
-    ' Comando com dois níveis de ordenação: Key1 (Vendedor) e Key2 (Cidade)
+    wsInad.Sort.SortFields.Clear 'limpando cache de memórias anteriores
+    
+    ' Ordenar por Vendedor e depois por Cidade
     wsInad.Range("A1:M" & ultLinhaMain).Sort _
         Key1:=wsInad.Range("K1"), Order1:=xlAscending, _
         Key2:=wsInad.Range("C1"), Order2:=xlAscending, _
         Header:=xlYes, _
         Orientation:=xlTopToBottom
         
-    ' Garante que a tela volte ao normal e limpa a área de transferência
+    'A tela volta ao normal e limpa a área de transferência
     Application.CutCopyMode = False
     Application.ScreenUpdating = True
     
     ' Mensagem final
-    MsgBox "Aba atualizada e ordenada com sucesso! (1º Vendedor, 2º Cidade).", vbInformation, "Concluído"
+    MsgBox "Atualizado e ordenado por VENDEDOR e CIDADE!", vbInformation, "Concluído"
 End Sub
