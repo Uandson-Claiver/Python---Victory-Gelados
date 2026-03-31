@@ -4,7 +4,7 @@ import glob
 import unicodedata
 import re
 
-# --- CONFIGURAÇÃO DE CAMINHOS ---
+#caminhos dos arquivos
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH_BRUTOS = os.path.join(BASE_DIR, 'Dados Brutos')
 PATH_MENSAL = os.path.join(PATH_BRUTOS, 'Faturamento_Mensal')
@@ -13,7 +13,7 @@ PATH_MESTRE = os.path.join(BASE_DIR, 'Tabela Mestre')
 PATH_SAIDA  = os.path.join(BASE_DIR, 'Saída Limpa')
 PATH_BACKUP = os.path.join(PATH_SAIDA, 'Clientes_Ociosos')
 
-# --- FUNÇÕES DE UTILIDADE ---
+#funções de utilidade, tal como o preenchimento de células vazias para evitar erros.
 def limpar_doc(doc):
     if pd.isna(doc) or str(doc).strip() == "": return "NAO_INFORMADO"
     d_str = str(doc).strip().upper()
@@ -45,7 +45,7 @@ def extrair_data_do_nome(nome_arquivo):
     ano = ano_busca.group(0) if ano_busca else "2026"
     return f"{ano}-{mes_num}-01"
 
-# --- PROCESSO 1: FATURAMENTO E DIM_CLIENTES ---
+#analisando Faturamento e Base de Clientes Mestre
 def processar_faturamento_e_mestre():
     print("Processando Faturamento e Tabela Mestre...")
     df_m = pd.read_csv(os.path.join(PATH_BRUTOS, 'Base_Clientes.csv'), sep=None, engine='python', encoding='latin1', dtype=str)
@@ -119,35 +119,35 @@ def processar_faturamento_e_mestre():
         if c not in df_m.columns: df_m[c] = "NAO_INFORMADO"
     df_m[cols_m].rename(columns={'Razao_Norm': 'Razao_Social', 'Fantasia_Norm': 'Nome_Fantasia', 'Doc_Limpo': 'CPF/CNPJ', 'Cid_Norm': 'Cidade'}).to_csv(os.path.join(PATH_MESTRE, 'Dim_Clientes.csv'), index=False, sep=';', encoding='utf-8-sig')
 
-# --- PROCESSO 2: RELATÓRIO DE OCIOSOS (HÍBRIDO: BI LONGO + EXCEL AGRUPADO) ---
+#Análise Relatório de Ociosos. BI = Arquivo CSV simples não concatenado. XLSX = Arquivo configurado com filtros, concatenado.
 def processar_ociosos():
-    print("Processando Clientes Ociosos (BI = Detalhado | Excel = Agrupado)...")
+    print("Processando Clientes Ociosos (BI = Detalhado | Excel = Simples e Agrupado)...")
     if not os.path.exists(PATH_BACKUP): os.makedirs(PATH_BACKUP)
     
-    # 1. Base de Patrimônios
+    #base de patrimônios
     df_p_raw = pd.read_excel(os.path.join(PATH_BRUTOS, 'Base_Patrimonios.xlsx'), dtype=str)
     col_nr_real = next((c for c in df_p_raw.columns if 'NR' in normalizar(c) and 'PATRI' in normalizar(c)), 'Nr.Patrimônio')
     df_p_raw['Razao_Social_Norm'] = df_p_raw['Razão Social'].apply(normalizar)
     df_pat_detalhado = df_p_raw[['Razao_Social_Norm', col_nr_real]].rename(columns={col_nr_real: 'Patrimonio_Individual'})
 
-    # 2. Leitura dos Arquivos Sem Compra
+    # arquivo dos clientes sem pedidos
     arquivos_sc = glob.glob(os.path.join(PATH_SEM_COMPRA, "*.csv"))
     if not arquivos_sc: return
     lista_dfs = []
     for f in arquivos_sc:
         data_ref = extrair_data_do_nome(os.path.basename(f))
         df_temp = pd.read_csv(f, sep=None, engine='python', encoding='latin1', dtype=str)
-        # Limpeza de nomes de colunas
+        #limpar nomes das colunas (acentos etc)
         df_temp.columns = [" ".join(re.sub(r'[^a-zA-Z0-9 ]', ' ', str(c)).split()).strip() for c in df_temp.columns]
         df_temp['Mes_Referencia'] = data_ref
-        # Preenche vazios com "NAO INFORMADO" para não sumir no groupby
+        # Preenche vazios com "NAO INFORMADO" para o comando GROUPBY não deletar a linha devido conteúdo vazio.
         df_temp = df_temp.fillna("NAO INFORMADO")
         df_temp['Cliente_Norm'] = df_temp['Cliente'].apply(normalizar)
         lista_dfs.append(df_temp)
 
     df_stack = pd.concat(lista_dfs, ignore_index=True)
     
-    # 3. Cruzamento Detalhado (Power BI)
+    #Cruzamento de dados para o Power BI
     df_final_bi = pd.merge(df_stack, df_pat_detalhado, left_on='Cliente_Norm', right_on='Razao_Social_Norm', how='left')
     df_final_bi['Patrimonio_Individual'] = df_final_bi['Patrimonio_Individual'].fillna('SEM COMODATO')
     df_final_bi['Qtd_Linha'] = df_final_bi['Patrimonio_Individual'].apply(lambda x: 0 if x == 'SEM COMODATO' else 1)
@@ -155,12 +155,11 @@ def processar_ociosos():
     df_csv_bi = df_final_bi.drop(columns=['Cliente_Norm', 'Razao_Social_Norm'], errors='ignore')
     df_csv_bi.to_csv(os.path.join(PATH_SAIDA, 'Relatorio_Ociosos_Final.csv'), index=False, sep=';', encoding='utf-8-sig')
 
-    # --- EXCEL FIXO (AGRUPADO) ---
-    
-    # Identifica colunas para agrupar (evitando as de valores e a norm)
+    #Gerando arquivo Excel estático
+    #agrupando colunas, com exceção de colunas _Norm e de Valores _Norm
     cols_para_agrupar = [c for c in df_final_bi.columns if c not in ['Patrimonio_Individual', 'Razao_Social_Norm', 'Qtd_Linha', 'Cliente_Norm']]
 
-    # CRITICAL FIX: dropna=False garante que linhas com algum campo vazio NÃO sumam
+    #BugFix: dropna=False  -- Linhas com algum campo vazio não somem. São preenchidas com "NÃO INFORMADO"
     df_excel_fixo = df_final_bi.groupby(cols_para_agrupar, as_index=False, dropna=False).agg({
         'Patrimonio_Individual': lambda x: ', '.join([str(i) for i in x.dropna() if str(i).strip() not in ["", "nan", "SEM COMODATO"]])
     })
@@ -168,10 +167,10 @@ def processar_ociosos():
     df_excel_fixo['Patrimonio_Individual'] = df_excel_fixo['Patrimonio_Individual'].replace('', 'SEM COMODATO')
     df_excel_fixo['Qtd_Equipamentos'] = df_excel_fixo['Patrimonio_Individual'].apply(lambda x: 0 if x == 'SEM COMODATO' else len(x.split(',')))
     
-    # Formata data
+    #Formata a data
     df_excel_fixo['Mes_Referencia'] = pd.to_datetime(df_excel_fixo['Mes_Referencia']).dt.date
     
-    # Salva Excel
+    #Salva o relatório em formato .xlsx
     data_snapshot = pd.Timestamp.now().strftime('%Y_%m_%d')
     nome_bkp_xlsx = os.path.join(PATH_BACKUP, f"Relatorio_Ociosos_FIXO_{data_snapshot}.xlsx")
     
@@ -194,9 +193,9 @@ def processar_ociosos():
     
     print(f"Processamento Concluído: BI Detalhado (.csv) | Backup Agrupado (.xlsx)")
 
-# --- EXECUÇÃO ---
+#executar script
 if __name__ == "__main__":
-    print("=== INICIANDO PROCESSAMENTO MESTRE UNIFICADO ===")
+    print("Iniciando script de Relatório BI e Relatório de Ociosos")
     processar_faturamento_e_mestre()
     processar_ociosos()
-    print("=== TUDO PRONTO! ===")
+    print("BI pronto e Relatório de Ociosos pronto!🤙🏽")
